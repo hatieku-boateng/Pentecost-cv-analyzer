@@ -38,6 +38,7 @@ import "./styles.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 const USER_KEY = "pentecost-modern-user";
+const TOKEN_KEY = "pentecost-modern-token";
 const STATUS_COLORS = {
   "CV Passed": "#15803d",
   "CV Not Passed": "#dc2626",
@@ -50,11 +51,22 @@ const STATUS_COLORS = {
 
 function assetUrl(path) {
   if (!path) return "";
-  return `${API_BASE}/files/${String(path).replaceAll("\\", "/")}`;
+  const normalized = String(path).replaceAll("\\", "/");
+  const token = localStorage.getItem(TOKEN_KEY) || "";
+  return `${API_BASE}/api/files/${encodeURI(normalized)}?access_token=${encodeURIComponent(token)}`;
+}
+
+function publicAssetUrl(filename) {
+  return `${API_BASE}/assets/${encodeURIComponent(filename)}`;
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, options);
+  const headers = new Headers(options.headers || {});
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!response.ok) {
     let message = `Request failed with ${response.status}`;
     try {
@@ -103,15 +115,13 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  async function refresh() {
+  async function refresh(activeUser = user) {
     setLoading(true);
     setError("");
     try {
-      const [jobsData, appsData, usersData] = await Promise.all([
-        api("/api/jobs"),
-        api("/api/applications"),
-        api("/api/users")
-      ]);
+      const jobsData = await api("/api/jobs");
+      const appsData = activeUser ? await api("/api/applications") : [];
+      const usersData = activeUser?.role === "admin" ? await api("/api/users") : [];
       setJobs(jobsData);
       setApplications(appsData);
       setUsers(usersData);
@@ -123,21 +133,47 @@ function App() {
   }
 
   useEffect(() => {
-    refresh();
+    async function bootstrap() {
+      const token = localStorage.getItem(TOKEN_KEY);
+      if (!token) {
+        logout();
+        await refresh(null);
+        return;
+      }
+
+      try {
+        const result = await api("/api/auth/me");
+        setUser(result.user);
+        localStorage.setItem(USER_KEY, JSON.stringify(result.user));
+        await refresh(result.user);
+      } catch {
+        logout();
+        await refresh(null);
+      }
+    }
+    bootstrap();
   }, []);
 
-  function handleUser(nextUser) {
+  function handleUser(authResult) {
+    const nextUser = authResult.user || authResult;
     setUser(nextUser);
     localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
+    if (authResult.token) {
+      localStorage.setItem(TOKEN_KEY, authResult.token);
+    }
     if (nextUser.role === "hr") setView("review");
     else if (nextUser.role === "pro_vc") setView("vc");
     else if (nextUser.role === "admin") setView("admin");
     else setView("jobs");
+    refresh(nextUser);
   }
 
   function logout() {
     setUser(null);
     localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(TOKEN_KEY);
+    setApplications([]);
+    setUsers([]);
     setView("jobs");
   }
 
@@ -229,7 +265,7 @@ function HeroStrip({ user, onLogout }) {
       <div className="hero-media" />
       <div className="hero-content">
         <div className="brand-mark">
-          <img src={assetUrl("pentecost logo.jpg")} alt="Pentecost University" />
+          <img src={publicAssetUrl("pentecost logo.jpg")} alt="Pentecost University" />
           <div>
             <h1>Pentecost Recruiter</h1>
             <p>CV analysis, vacancies, interviews, and approvals</p>
@@ -319,7 +355,7 @@ function LoginForm({ onLogin }) {
         headers: { "Content-Type": "application/json" },
         body
       });
-      onLogin(result.user);
+      onLogin(result);
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -365,7 +401,7 @@ function SignupForm({ onSignup }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form)
       });
-      onSignup(result.user);
+      onSignup(result);
     } catch (err) {
       setMessage(err.message);
     } finally {

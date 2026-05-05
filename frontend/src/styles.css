@@ -65,7 +65,7 @@ a {
   inset: 0;
   background:
     linear-gradient(90deg, rgba(9, 24, 18, 0.92), rgba(9, 24, 18, 0.72), rgba(9, 24, 18, 0.2)),
-    url("/files/school.jpeg") center / cover;
+    url("/assets/school.jpeg") center / cover;
 }
 
 .hero-content {
